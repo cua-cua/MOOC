@@ -1,5 +1,12 @@
 #include <wb.h> //@@ wb include opencl.h for you
 
+/*__kernel void vadd(__global const float *a, __global const float *b, __global float *result)
+
+		{
+		int id = get_global_id(0);
+		result[id] = a[id] + b[id];
+		}*/
+  
 //@@ OpenCL Kernel
 
 int main(int argc, char **argv) {
@@ -8,11 +15,41 @@ int main(int argc, char **argv) {
   float *hostInput1;
   float *hostInput2;
   float *hostOutput;
-  float *deviceInput1;
+ /* float *deviceInput1;
   float *deviceInput2;
-  float *deviceOutput;
+  float *deviceOutput;*/
+	
 
+	
   args = wbArg_read(argc, argv);
+	
+	//@@ Setup Code
+  
+  cl_int clerr = CL_SUCCESS;
+  cl_context clctx = clCreateContextFromType(0, CL_DEVICE_TYPE_ALL, 
+											 NULL, NULL, &clerr);
+ 
+   size_t parmsz;	
+  clerr = clGetContextInfo(clctx, CL_CONTEXT_DEVICES, 0, NULL, &parmsz);
+/*cl_int clGetContextInfo(_cl_context*, cl_context_info, size_t, void*, size_t*)*/
+ 
+cl_device_id* cldevs = (cl_device_id *) malloc(parmsz);
+  clerr = clGetContextInfo(clctx, CL_CONTEXT_DEVICES, parmsz, cldevs, NULL);
+	
+  cl_command_queue clcmdq = clCreateCommandQueue(clctx, cldevs[0], 0, &clerr); 
+
+  const char* vaddsrc = 
+"__kernel void vadd(__global float *a, __global float *b, __global float *result){int id = get_global_id(0); result[id] = a[id] + b[id];}";
+	  
+  cl_program clpgm;
+  clpgm = clCreateProgramWithSource(clctx, 1, &vaddsrc,NULL, &clerr);
+
+  char clcompileflags[4096];
+  sprintf(clcompileflags, "-cl-mad-enable");
+  clerr = clBuildProgram(clpgm, 0, NULL, clcompileflags, NULL, NULL);	
+	
+	
+  //@@ Importing data 
 
   wbTime_start(Generic, "Importing data and creating memory on host");
   hostInput1 = (float *)wbImport(wbArg_getInputFile(args, 0), &inputLength);
@@ -22,31 +59,67 @@ int main(int argc, char **argv) {
 
   wbLog(TRACE, "The input length is ", inputLength);
 
-  wbTime_start(GPU, "Allocating GPU memory.");
-  //@@ Allocate GPU memory here
+  wbTime_start(GPU, "Allocating/Copying GPU memory.");
+  //@@ Allocate GPU memory here //@@ Copy memory to the GPU here
+	
+    cl_mem d_A;
+    cl_mem d_B;
+    cl_mem d_C;
+	
+	d_A = clCreateBuffer(clctx, CL_MEM_READ_ONLY |CL_MEM_COPY_HOST_PTR, 
+						 inputLength *sizeof(float), hostInput1, NULL);
+	d_B = clCreateBuffer(clctx, CL_MEM_READ_ONLY |CL_MEM_COPY_HOST_PTR, 
+						 inputLength *sizeof(float), hostInput2, NULL);
+	d_C = clCreateBuffer(clctx, CL_MEM_WRITE_ONLY, inputLength *sizeof(float), NULL, NULL);
 
-  wbTime_stop(GPU, "Allocating GPU memory.");
+  wbTime_stop(GPU, "Allocating/Copying GPU memory.");
 
-  wbTime_start(GPU, "Copying input memory to the GPU.");
-  //@@ Copy memory to the GPU here
-
-  wbTime_stop(GPU, "Copying input memory to the GPU.");
-
+ 
   //@@ Initialize the grid and block dimensions here
 
   wbTime_start(Compute, "Performing CUDA computation");
-  //@@ Launch the GPU Kernel here
+	
+    cl_kernel clkern = clCreateKernel(clpgm, "vadd", NULL);
 
-  cudaThreadSynchronize();
-  wbTime_stop(Compute, "Performing CUDA computation");
+	clerr= clSetKernelArg(clkern, 0, sizeof(cl_mem),(void *)&d_A);
+	clerr= clSetKernelArg(clkern, 1, sizeof(cl_mem),(void *)&d_B);
+	clerr= clSetKernelArg(clkern, 2, sizeof(cl_mem),(void *)&d_C);
+	clerr= clSetKernelArg(clkern, 3, sizeof(int), &inputLength);	
+	
+	
+  //@@ Launch the GPU Kernel here
+						
+	cl_event event=NULL;
+
+	/*size_t Gsz = (inputLength-1)/256+1;
+	size_t Bsz = 256;*/
+	
+	size_t Gsz ;
+	size_t Bsz ;
+	
+	/*cl_int clEnqueueNDRangeKernel(_cl_command_queue*, _cl_kernel*, cl_uint, const size_t*, 
+								   const size_t*, const size_t*, cl_uint, _cl_event* const*, _cl_event**)*/
+	clerr= clEnqueueNDRangeKernel(clcmdq, clkern, 2, NULL, &Gsz, &Bsz, 0, NULL, &event);
+	clerr= clWaitForEvents(1, &event);
+	
+ 
+  	wbTime_stop(Compute, "Performing CUDA computation");
 
   wbTime_start(Copy, "Copying output memory to the CPU");
   //@@ Copy the GPU memory back to the CPU here
+						
+  clEnqueueReadBuffer(clcmdq, d_C, CL_TRUE, 0, inputLength*sizeof(float), 
+						hostOutput, 0, NULL, NULL);
 
   wbTime_stop(Copy, "Copying output memory to the CPU");
 
   wbTime_start(GPU, "Freeing GPU Memory");
   //@@ Free the GPU memory here
+   	
+	clReleaseMemObject(d_A);
+	clReleaseMemObject(d_B);
+	clReleaseMemObject(d_C);						
+						
 
   wbTime_stop(GPU, "Freeing GPU Memory");
 
