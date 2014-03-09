@@ -24,16 +24,26 @@ int main(int argc, char **argv) {
   args = wbArg_read(argc, argv);
 	
 	//@@ Setup Code
+	
+    cl_platform_id cpPlatform;     // OpenCL platform
+    cl_device_id cldevs;           // device ID
+
   
   cl_int clerr = CL_SUCCESS;
-  cl_context clctx = clCreateContextFromType(0, CL_DEVICE_TYPE_ALL, 
-											 NULL, NULL, &clerr);
+	
+  clerr = clGetPlatformIDs(1, &cpPlatform, NULL);
+  // Get ID for the device
+	
+  clerr = clGetDeviceIDs(cpPlatform, CL_DEVICE_TYPE_GPU, 1, &cldevs, NULL);
+  cl_context clctx = clCreateContext(0, 1, &cldevs, NULL, NULL, &clerr);
+
+/*cl_context clctx = clCreateContextFromType(0, CL_DEVICE_TYPE_ALL, NULL, NULL, &clerr);*/
  
    size_t parmsz;	
   clerr = clGetContextInfo(clctx, CL_CONTEXT_DEVICES, 0, NULL, &parmsz);
 /*cl_int clGetContextInfo(_cl_context*, cl_context_info, size_t, void*, size_t*)*/
  
-cl_device_id* cldevs = (cl_device_id *) malloc(parmsz);
+  cl_device_id* cldevs = (cl_device_id *) malloc(parmsz);
   clerr = clGetContextInfo(clctx, CL_CONTEXT_DEVICES, parmsz, cldevs, NULL);
 	
   cl_command_queue clcmdq = clCreateCommandQueue(clctx, cldevs[0], 0, &clerr); 
@@ -91,17 +101,15 @@ cl_device_id* cldevs = (cl_device_id *) malloc(parmsz);
 						
 	cl_event event=NULL;
 
-	/*size_t Gsz = (inputLength-1)/256+1;
-	size_t Bsz = 256;*/
-	
-	size_t Gsz ;
-	size_t Bsz ;
+    size_t Bsz = 256;
+    size_t Gsz = ((inputLength-1)/256+1)*Bsz;
+
 	
 	/*cl_int clEnqueueNDRangeKernel(_cl_command_queue*, _cl_kernel*, cl_uint, const size_t*, 
 								   const size_t*, const size_t*, cl_uint, _cl_event* const*, _cl_event**)*/
-	clerr= clEnqueueNDRangeKernel(clcmdq, clkern, 2, NULL, &Gsz, &Bsz, 0, NULL, &event);
+	clerr= clEnqueueNDRangeKernel(clcmdq, clkern, 1, NULL, &Gsz, &Bsz, 0, NULL, &event);
 	clerr= clWaitForEvents(1, &event);
-	
+	wbLog(TRACE, "some message...");
  
   	wbTime_stop(Compute, "Performing CUDA computation");
 
@@ -131,4 +139,3 @@ cl_device_id* cldevs = (cl_device_id *) malloc(parmsz);
 
   return 0;
 }
-
