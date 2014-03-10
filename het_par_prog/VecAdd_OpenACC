@@ -1,14 +1,20 @@
 #include <wb.h> 
 
+void vecAdd(float* h_A, float* h_B, float* h_C, int n)
+{
+#pragma acc parallel loop copyin(h_A[0:n])copyin(h_B[0:n]) copyout(h_C[0:n])	
+
+int i;
+for (i = 0; i<n; i++) h_C[i] = h_A[i]+h_B[i];
+}
+
 int main(int argc, char **argv) {
   wbArg_t args;
   int inputLength;
   float *hostInput1;
   float *hostInput2;
   float *hostOutput;
-  float *deviceInput1;
-  float *deviceInput2;
-  float *deviceOutput;
+ 
 
   args = wbArg_read(argc, argv);
 
@@ -19,7 +25,9 @@ int main(int argc, char **argv) {
   wbTime_stop(Generic, "Importing data and creating memory on host");
 
   wbLog(TRACE, "The input length is ", inputLength);
-
+  
+  vecAdd(hostInput1, hostInput2, hostOutput, inputLength);
+	
 
   wbSolution(args, hostOutput, inputLength);
 
