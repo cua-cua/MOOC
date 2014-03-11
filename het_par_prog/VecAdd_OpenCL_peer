@@ -1,0 +1,237 @@
+#include <wb.h> //@@ wb include opencl.h for you
+#define wbCheck(stmt) do {                                               	\
+        cl_int err = stmt;                                               	\
+        if (err != CL_SUCCESS) {                                            \
+            wbLog(ERROR, "Failed to run stmt ", #stmt);                     \
+            wbLog(ERROR, "Got OpenCL error ...  ", get_error_string(err));  \
+            return -1;                                                      \
+        }                                                                   \
+    } while(0)
+
+
+const char * get_error_string(cl_int err){
+	switch(err){
+		case 0: return "CL_SUCCESS";
+		case -1: return "CL_DEVICE_NOT_FOUND";
+		case -2: return "CL_DEVICE_NOT_AVAILABLE";
+		case -3: return "CL_COMPILER_NOT_AVAILABLE";
+		case -4: return "CL_MEM_OBJECT_ALLOCATION_FAILURE";
+		case -5: return "CL_OUT_OF_RESOURCES";
+		case -6: return "CL_OUT_OF_HOST_MEMORY";
+		case -7: return "CL_PROFILING_INFO_NOT_AVAILABLE";
+		case -8: return "CL_MEM_COPY_OVERLAP";
+		case -9: return "CL_IMAGE_FORMAT_MISMATCH";
+		case -10: return "CL_IMAGE_FORMAT_NOT_SUPPORTED";
+		case -11: return "CL_BUILD_PROGRAM_FAILURE";
+		case -12: return "CL_MAP_FAILURE";
+		
+		case -30: return "CL_INVALID_VALUE";
+		case -31: return "CL_INVALID_DEVICE_TYPE";
+		case -32: return "CL_INVALID_PLATFORM";
+		case -33: return "CL_INVALID_DEVICE";
+		case -34: return "CL_INVALID_CONTEXT";
+		case -35: return "CL_INVALID_QUEUE_PROPERTIES";
+		case -36: return "CL_INVALID_COMMAND_QUEUE";
+		case -37: return "CL_INVALID_HOST_PTR";
+		case -38: return "CL_INVALID_MEM_OBJECT";
+		case -39: return "CL_INVALID_IMAGE_FORMAT_DESCRIPTOR";
+		case -40: return "CL_INVALID_IMAGE_SIZE";
+		case -41: return "CL_INVALID_SAMPLER";
+		case -42: return "CL_INVALID_BINARY";
+		case -43: return "CL_INVALID_BUILD_OPTIONS";
+		case -44: return "CL_INVALID_PROGRAM";
+		case -45: return "CL_INVALID_PROGRAM_EXECUTABLE";
+		case -46: return "CL_INVALID_KERNEL_NAME";
+		case -47: return "CL_INVALID_KERNEL_DEFINITION";
+		case -48: return "CL_INVALID_KERNEL";
+		case -49: return "CL_INVALID_ARG_INDEX";
+		case -50: return "CL_INVALID_ARG_VALUE";
+		case -51: return "CL_INVALID_ARG_SIZE";
+		case -52: return "CL_INVALID_KERNEL_ARGS";
+		case -53: return "CL_INVALID_WORK_DIMENSION";
+		case -54: return "CL_INVALID_WORK_GROUP_SIZE";
+		case -55: return "CL_INVALID_WORK_ITEM_SIZE";
+		case -56: return "CL_INVALID_GLOBAL_OFFSET";
+		case -57: return "CL_INVALID_EVENT_WAIT_LIST";
+		case -58: return "CL_INVALID_EVENT";
+		case -59: return "CL_INVALID_OPERATION";
+		case -60: return "CL_INVALID_GL_OBJECT";
+		case -61: return "CL_INVALID_BUFFER_SIZE";
+		case -62: return "CL_INVALID_MIP_LEVEL";
+		case -63: return "CL_INVALID_GLOBAL_WORK_SIZE";
+		default: return "Unknown OpenCL error";
+	}
+}
+
+void  get_build_error(cl_program prg, void * devId) {   
+	char *ch;
+        cl_device_id _devId;
+	size_t length ;
+	
+	memcpy((cl_device_id *)&_devId, (const void *)devId, sizeof(cl_device_id));
+    
+	clGetProgramBuildInfo(prg, _devId, CL_PROGRAM_BUILD_LOG, 0, NULL, &length);
+	ch = (char *)malloc(length * sizeof(char));
+	clGetProgramBuildInfo(prg, _devId, CL_PROGRAM_BUILD_LOG, length, ch, &length);
+	
+	if (length > 2)
+		printf("Got OpenCL kernel build error...\n%s", ch);
+	
+	free(ch);
+}
+
+//@@ OpenCL Kernel
+const char* add_src = 
+	"__kernel void add_vec(__global const float* a, __global const float* b, __global float* result, int len) {"
+	"    int id = get_global_id(0);"
+	"    if(id < len) {"
+	"        result[id] = a[id] + b[id];"
+	"    }"
+	"}";
+
+int main(int argc, char **argv) {
+  wbArg_t args;
+  int inputLength;
+  float *hostInput1;
+  float *hostInput2;
+  float *hostOutput;
+  cl_mem deviceInput1;
+  cl_mem deviceInput2;
+  cl_mem deviceOutput;
+  cl_int err = CL_SUCCESS;
+
+  args = wbArg_read(argc, argv);
+
+  wbTime_start(Generic, "Importing data and creating memory on host");
+  hostInput1 = (float *)wbImport(wbArg_getInputFile(args, 0), &inputLength);
+  hostInput2 = (float *)wbImport(wbArg_getInputFile(args, 1), &inputLength);
+  hostOutput = (float *)malloc(inputLength * sizeof(float));
+  wbTime_stop(Generic, "Importing data and creating memory on host");
+
+  wbLog(TRACE, "The input length is ", inputLength);
+
+	
+  wbTime_start(GPU, "Get CL context");
+	
+	// query the number of platforms
+   cl_uint numPlatforms;
+   wbCheck(clGetPlatformIDs(0, NULL, &numPlatforms));
+	wbLog(TRACE, "Nuber of plutforms is ", numPlatforms);
+
+   // now get all the platform IDs
+   cl_platform_id platforms[numPlatforms];
+   wbCheck(clGetPlatformIDs(numPlatforms, platforms, NULL));
+
+   // set platform property - we just pick the first one
+   cl_context_properties properties[] = {CL_CONTEXT_PLATFORM, (cl_context_properties)platforms[0], 0};
+
+	
+	cl_context ctxt;
+	ctxt = clCreateContextFromType(properties, CL_DEVICE_TYPE_ALL, NULL, NULL, &err);
+	if (err != CL_SUCCESS) { 
+		wbLog(ERROR, "clCreateContext failed: ", get_error_string(err));
+		return -1;
+	} 
+	size_t parmsz;
+	wbCheck(clGetContextInfo(ctxt, CL_CONTEXT_DEVICES, 0, NULL, &parmsz));
+	cl_device_id* cldevs = (cl_device_id *) malloc(parmsz);
+	wbCheck(clGetContextInfo(ctxt, CL_CONTEXT_DEVICES, parmsz, cldevs, NULL));
+	
+  wbTime_stop(GPU, "Get CL context");
+
+  wbTime_start(GPU, "Compile program");	
+	cl_program program;
+	cl_kernel kernel;
+	const size_t program_size = strlen(add_src);		  
+	program = clCreateProgramWithSource(ctxt, 1, &add_src, &program_size, &err);
+	if (err != CL_SUCCESS) { 
+		wbLog(ERROR, "clCreateProgram failed: ", get_error_string(err));
+		return -1;
+	} 
+	
+  	//clBuildProgram(program, 0, NULL, NULL, get_build_error, NULL);
+	err = clBuildProgram(program, 0, NULL, NULL, NULL, NULL);	
+	if (err != CL_SUCCESS) { 
+		
+		size_t log_size;
+		clGetProgramBuildInfo(program, cldevs[0], CL_PROGRAM_BUILD_LOG, 0, NULL, &log_size);
+		char* program_log = (char*) calloc(log_size+1, sizeof(char));
+		clGetProgramBuildInfo(program, cldevs[0], CL_PROGRAM_BUILD_LOG, 0, program_log, &log_size);
+		//wbLog(TRACE,"build failed: ", program_log);
+		printf("%s\n", program_log);
+		
+		return -1;
+	}
+	
+	
+	kernel = clCreateKernel(program, "add_vec", &err);
+	if (err != CL_SUCCESS) { 
+		wbLog(ERROR, "clCreateKernel failed: ", get_error_string(err));
+		return -1;
+	} 
+  wbTime_stop(GPU, "Compile program");	
+	
+  wbTime_start(GPU, "Allocating GPU memory.");
+  //@@ Allocate GPU memory here
+	cl_command_queue queue;
+	queue = clCreateCommandQueue(ctxt, cldevs[0], 0, &err);
+	deviceInput1 = clCreateBuffer(ctxt, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, sizeof(float) * inputLength, hostInput1, &err);
+	if (err != CL_SUCCESS) { 
+		wbLog(ERROR, "clCreateBuffer a failed: ", get_error_string(err));
+		return -1;
+	} 
+	deviceInput2 = clCreateBuffer(ctxt, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, sizeof(float) * inputLength, hostInput2, &err);
+	if (err != CL_SUCCESS) { 
+		wbLog(ERROR, "clCreateBuffer b failed: ", get_error_string(err));
+		return -1;
+	} 
+	deviceOutput = clCreateBuffer(ctxt, CL_MEM_WRITE_ONLY, sizeof(float) * inputLength, NULL, &err);
+	if (err != CL_SUCCESS) { 
+		wbLog(ERROR, "clCreateBuffer out failed: ", get_error_string(err));
+		return -1;
+	} 
+		
+  wbTime_stop(GPU, "Allocating GPU memory.");
+
+ 
+  //@@ Initialize the grid and block dimensions here
+
+  wbTime_start(Compute, "Performing CL computation");
+  //@@ Launch the GPU Kernel here
+	wbCheck(clSetKernelArg(kernel, 0, sizeof(cl_mem), &deviceInput1));
+	wbCheck(clSetKernelArg(kernel, 1, sizeof(cl_mem), &deviceInput2));
+	wbCheck(clSetKernelArg(kernel, 2, sizeof(cl_mem), &deviceOutput));
+	wbCheck(clSetKernelArg(kernel, 3, sizeof(int), &inputLength));
+ 
+	size_t work_unit_per_krnl = inputLength;
+	wbCheck(clEnqueueNDRangeKernel(queue, kernel, 1, NULL, &work_unit_per_krnl, NULL, 0, NULL, NULL));
+  wbTime_stop(Compute, "Performing CL computation");
+
+  wbTime_start(Copy, "Copying output memory to the CPU");
+  //@@ Copy the GPU memory back to the CPU here
+	clEnqueueReadBuffer(queue, deviceOutput, CL_TRUE, 0, sizeof(float) * inputLength, hostOutput, 0, NULL, NULL);
+
+  wbTime_stop(Copy, "Copying output memory to the CPU");
+
+  wbTime_start(GPU, "Freeing GPU Memory");
+  //@@ Free the GPU memory here
+	clReleaseMemObject(deviceInput1);		
+	clReleaseMemObject(deviceInput2);		
+	clReleaseMemObject(deviceOutput);	
+	clReleaseKernel(kernel);
+	clReleaseCommandQueue(queue);
+	clReleaseProgram(program);
+	clReleaseContext(ctxt);
+
+  wbTime_stop(GPU, "Freeing GPU Memory");
+
+  wbSolution(args, hostOutput, inputLength);
+
+  free(hostInput1);
+  free(hostInput2);
+  free(hostOutput);
+	free(cldevs);
+
+  return 0;
+}
+
