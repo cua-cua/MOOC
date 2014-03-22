@@ -1,0 +1,123 @@
+#include	<wb.h>
+
+__global__ void vecAdd(float * in1, float * in2, float * out, int len) {
+    //@@ Insert code to implement vector addition here
+	int i = threadIdx.x + blockDim.x * blockIdx.x;
+	if (i<len) out[i] = in1[i] + in2[i];
+}
+
+int main(int argc, char ** argv) {
+    wbArg_t args;
+	cudaStream_t stream0, stream1, stream2, stream3;
+    int inputLength;
+	int SegSize;
+    float * hostInput1;
+    float * hostInput2;
+    float * hostOutput;
+  /*  float * deviceInput1;
+    float * deviceInput2;
+    float * deviceOutput;*/
+    float *d_A0, *d_B0, *d_C0;// device memory for stream 0
+    float *d_A1, *d_B1, *d_C1;// device memory for stream 1
+	float *d_A2, *d_B2, *d_C2;// device memory for stream 2
+    float *d_A3, *d_B3, *d_C3;// device memory for stream 3
+	
+	
+    args = wbArg_read(argc, argv);
+
+
+    wbTime_start(Generic, "Importing data and creating memory on host");
+    hostInput1 = (float *) wbImport(wbArg_getInputFile(args, 0), &inputLength);
+    hostInput2 = (float *) wbImport(wbArg_getInputFile(args, 1), &inputLength);
+    hostOutput = (float *) malloc(inputLength * sizeof(float));
+    wbTime_stop(Generic, "Importing data and creating memory on host");
+	
+	wbLog(TRACE, "The input length is ", inputLength);
+	
+	//SegSize value
+	SegSize= 256;
+	
+	//Stream creation
+   
+  	cudaStreamCreate(&stream0);
+   	cudaStreamCreate(&stream1);
+	cudaStreamCreate(&stream2);
+   	cudaStreamCreate(&stream3);
+	
+	// cudaMalloc for device streams
+	
+	wbTime_start(GPU, "Allocating GPU memory.");
+    //@@ Allocate GPU memory here
+	cudaMalloc((void **) &d_A0, SegSize * sizeof(float));
+	cudaMalloc((void **) &d_B0, SegSize * sizeof(float));
+	cudaMalloc((void **) &d_C0, SegSize * sizeof(float));
+	
+	cudaMalloc((void **) &d_A1, SegSize * sizeof(float));
+	cudaMalloc((void **) &d_B1, SegSize * sizeof(float));
+	cudaMalloc((void **) &d_C1, SegSize * sizeof(float));
+	
+	cudaMalloc((void **) &d_A2, SegSize * sizeof(float));
+	cudaMalloc((void **) &d_B2, SegSize * sizeof(float));
+	cudaMalloc((void **) &d_C2, SegSize * sizeof(float));
+	
+	cudaMalloc((void **) &d_A3, SegSize * sizeof(float));
+	cudaMalloc((void **) &d_B3, SegSize * sizeof(float));
+	cudaMalloc((void **) &d_C3, SegSize * sizeof(float));
+
+	wbTime_stop(GPU, "Allocating GPU memory.");
+	
+	
+	wbTime_start(GPU, "Addition.");
+	
+	//stream calculation
+	
+	for (int i=0; i<inputLength; i+=SegSize*4) {
+    cudaMemcpyAsync(d_A0, hostInput1+i, SegSize*sizeof(float),cudaMemcpyHostToDevice, stream0);
+    cudaMemcpyAsync(d_B0, hostInput2+i, SegSize*sizeof(float),cudaMemcpyHostToDevice, stream0);
+    vecAdd<<<SegSize/256, 256, 0, stream0>>>(d_A0,d_B0,d_C0,SegSize);
+	cudaStreamSynchronize(stream0);
+    cudaMemcpyAsync(hostOutput+i, d_C0, SegSize*sizeof(float),cudaMemcpyDeviceToHost, stream0);
+	 	
+    cudaMemcpyAsync(d_A1, hostInput1+i+SegSize, SegSize*sizeof(float),cudaMemcpyHostToDevice,stream1);
+    cudaMemcpyAsync(d_B1, hostInput2+i+SegSize, SegSize*sizeof(float),cudaMemcpyHostToDevice,stream1);
+    vecAdd<<<SegSize/256, 256, 0, stream1>>>(d_A1,d_B1,d_C1,SegSize);
+	cudaStreamSynchronize(stream1);
+    cudaMemcpyAsync(hostOutput+i+SegSize,d_C1, SegSize*sizeof(float),cudaMemcpyDeviceToHost,stream1);
+	
+	cudaMemcpyAsync(d_A2, hostInput1+i+2*SegSize, SegSize*sizeof(float),cudaMemcpyHostToDevice,stream2);
+    cudaMemcpyAsync(d_B2, hostInput2+i+2*SegSize, SegSize*sizeof(float),cudaMemcpyHostToDevice,stream2);
+    vecAdd<<<SegSize/256, 256, 0, stream2>>>(d_A2,d_B2,d_C2,SegSize);
+	cudaStreamSynchronize(stream2);
+    cudaMemcpyAsync( hostOutput+i+2*SegSize,d_C2, SegSize*sizeof(float),cudaMemcpyDeviceToHost,stream2);
+		
+	cudaMemcpyAsync(d_A3, hostInput1+i+3*SegSize, SegSize*sizeof(float),cudaMemcpyHostToDevice,stream3);
+    cudaMemcpyAsync(d_B3, hostInput2+i+3*SegSize, SegSize*sizeof(float),cudaMemcpyHostToDevice,stream3);
+    vecAdd<<<SegSize/256, 256, 0, stream3>>>(d_A3,d_B3,d_C3,SegSize);
+    cudaStreamSynchronize(stream3);		
+    cudaMemcpyAsync(hostOutput+i+3*SegSize,d_C3,SegSize*sizeof(float),cudaMemcpyDeviceToHost,stream3);			
+   }
+
+    wbTime_stop(GPU, "Addition.");  
+	
+	wbTime_start(GPU, "Free device memory.");
+	
+    //@@ Free the GPU memory here
+	cudaFree(d_A1);cudaFree(d_B0);cudaFree(d_C0);
+	cudaFree(d_A2);cudaFree(d_B1);cudaFree(d_C1);
+	cudaFree(d_A3);cudaFree(d_B2);cudaFree(d_C2);
+    cudaFree(d_A0);cudaFree(d_B3);cudaFree(d_C3);
+	
+	wbTime_stop(GPU, "Free device memory.");  
+  
+	wbSolution(args, hostOutput, inputLength);
+
+    free(hostInput1);
+    free(hostInput2);
+    free(hostOutput);
+	
+	
+
+    return 0;
+}
+
+
